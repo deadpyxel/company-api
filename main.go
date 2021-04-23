@@ -105,14 +105,15 @@ System requirements:
 func main() {
 	db := setup_database(true)
 
-	// Data acquisition and filtering
+	// Initial data acquisition
 	company_data := read_csv("input_data/q1_catalog.csv")
-
 	company_data = format_company_data(company_data)
+	// Initial data population
 	populate_database(company_data, db)
 
-	mergeable_data := read_csv("input_data/q2_clientData.csv")
-	mergeable_data = format_company_data(mergeable_data)
-
-	merge_data(db, mergeable_data)
+	// acquire additional data
+	additional_data := read_csv("input_data/q2_clientData.csv")
+	additional_data = format_company_data(additional_data)
+	// Merge the newly acquired data
+	merge_data(db, additional_data)
 }
