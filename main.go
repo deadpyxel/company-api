@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/csv"
+	"errors"
 	"os"
 	"strings"
 
@@ -82,6 +83,19 @@ func populate_database(company_data [][]string, db *gorm.DB) {
 	}
 }
 
+func merge_data(current_db *gorm.DB, additional_data [][]string) {
+	log.Info("Attempting to merge ", len(additional_data), " entries into the database...")
+	for _, company_data := range additional_data {
+		var comp Company
+		result := current_db.Where("company_name LIKE ? AND zip_code = ?", "%"+company_data[0]+"%", company_data[1]).First(&comp)
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			log.Error("Company not found...skipping...")
+			continue
+		}
+		current_db.Model(&comp).Update("website", company_data[2])
+	}
+}
+
 /*
 System requirements:
   1. Open CSV, parse and save the data on DB;
@@ -89,7 +103,7 @@ System requirements:
   3. Serve information as a REST API
 */
 func main() {
-	db := setup_database()
+	db := setup_database(true)
 
 	// Data acquisition and filtering
 	company_data := read_csv("input_data/q1_catalog.csv")
@@ -99,16 +113,6 @@ func main() {
 
 	mergeable_data := read_csv("input_data/q2_clientData.csv")
 	mergeable_data = format_company_data(mergeable_data)
-	log.Println(mergeable_data)
 
-	// Create
-	// db.Create(&Company{Company_name: "Test 1", Zip_Code: "00000"})
-	// db.Create(&Company{Company_name: "Test 2", Zip_Code: "00000"})
-	// var comp Company
-	// READ
-	// db.First(&comp, "company_name = ?", "Test 1")
-	// UPDATE
-	// db.Model(&comp).Update("Zip_Code", "01011")
-	// DELETE
-	// db.Delete(&comp, 1)
+	merge_data(db, mergeable_data)
 }
