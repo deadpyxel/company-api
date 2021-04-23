@@ -57,7 +57,11 @@ func format_company_data(company_data [][]string) [][]string {
 
 }
 
-func setup_database() *gorm.DB {
+func setup_database(remove_current bool) *gorm.DB {
+	if remove_current {
+		log.Info("Removing existing data...")
+		os.Remove("test.db")
+	}
 	// Database connection/setup
 	db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
 	if err != nil {
