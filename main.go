@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
 
 	valid "github.com/asaskevich/govalidator"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/driver/sqlite"
@@ -17,7 +19,6 @@ import (
 )
 
 type Company struct {
-	gorm.Model
 	Id           uint   `gorm:"autoIncrement,primaryKey" json:"id"`
 	Company_name string `valid:"string" json:"name"`
 	Zip_Code     string `gorm:"size:5" valid:"length(5),numeric" json:"zip"`
@@ -29,11 +30,9 @@ type QueryData struct {
 	Zip_Code string `json:"zip_code"`
 }
 
-type APIResponseError struct {
+type APIResponse struct {
 	Message string `json:"message"`
 }
-
-const MAX_FILE_SIZE = 1024 * 1024 // 1MB
 
 func init() {
 	valid.SetFieldsRequiredByDefault(true)
@@ -51,7 +50,30 @@ func createServer(port int) {
 func importData(res http.ResponseWriter, req *http.Request) {
 	log.Info("Received request in ", req.URL.Path) // TODO: convert to a middleware
 	res.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(res).Encode("{message: haha}")
+
+	file, _, err := req.FormFile("file")
+	if err != nil {
+		res.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(res).Encode(APIResponse{Message: "Error while reading file from request."})
+	}
+	defer file.Close()
+
+	f_name := "uploads/" + uuid.NewString()
+	f, err := os.Create(f_name)
+	if err != nil {
+		res.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(res).Encode(APIResponse{Message: "Error while reading file contents."})
+	}
+	io.Copy(f, file)
+	f.Close()
+
+	new_data := read_csv(f_name)
+	new_data = format_company_data(new_data)
+	db_ref := createConnection()
+	merge_data(db_ref, new_data)
+
+	json.NewEncoder(res).Encode(APIResponse{Message: "Operation finished Sucessfully"})
+	os.Remove(f_name)
 }
 
 func searchCompany(res http.ResponseWriter, req *http.Request) {
@@ -59,7 +81,6 @@ func searchCompany(res http.ResponseWriter, req *http.Request) {
 
 	var req_body QueryData
 	json.NewDecoder(req.Body).Decode(&req_body)
-	log.Info(req_body)
 
 	company := queryDB(req_body)
 	res.Header().Set("Content-Type", "application/json")
@@ -68,7 +89,7 @@ func searchCompany(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 	res.WriteHeader(http.StatusNotFound)
-	json.NewEncoder(res).Encode(APIResponseError{Message: "Company not found."})
+	json.NewEncoder(res).Encode(APIResponse{Message: "Company not found."})
 
 }
 
@@ -173,12 +194,6 @@ func main() {
 	company_data = format_company_data(company_data)
 	// Initial data population
 	populate_database(company_data, db)
-
-	// acquire additional data
-	additional_data := read_csv("input_data/q2_clientData.csv")
-	additional_data = format_company_data(additional_data)
-	// Merge the newly acquired data
-	merge_data(db, additional_data)
 
 	createServer(8000)
 }
