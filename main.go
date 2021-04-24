@@ -2,28 +2,110 @@ package main
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 
 	valid "github.com/asaskevich/govalidator"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 type Company struct {
-	gorm.Model
-	Id           uint   `gorm:"autoIncrement,primaryKey"`
-	Company_name string `valid:"string"`
-	Zip_Code     string `gorm:"size:5" valid:"length(5),numeric"`
-	Website      string `valid:"url,optional"`
+	Id           uint   `gorm:"autoIncrement,primaryKey" json:"id"`
+	Company_name string `valid:"string" json:"name"`
+	Zip_Code     string `gorm:"size:5" valid:"length(5),numeric" json:"zip"`
+	Website      string `valid:"url,optional" json:"website"`
+}
+
+type QueryData struct {
+	Name     string `json:"name"`
+	Zip_Code string `json:"zip_code"`
+}
+
+type APIResponse struct {
+	Message string `json:"message"`
 }
 
 func init() {
 	valid.SetFieldsRequiredByDefault(true)
 }
 
+// Network functions
+func createServer(port int) {
+	router := mux.NewRouter().StrictSlash(true)
+	router.HandleFunc("/import", importData).Methods("POST")
+	router.HandleFunc("/companies/search", searchCompany).Methods("GET")
+	log.Info("Attempting to serve API on ", port)
+	log.Fatal(http.ListenAndServe(":"+fmt.Sprint(port), router))
+}
+
+func importData(res http.ResponseWriter, req *http.Request) {
+	log.Info("Received request in ", req.URL.Path) // TODO: convert to a middleware
+	res.Header().Set("Content-Type", "application/json")
+
+	file, _, err := req.FormFile("file")
+	if err != nil {
+		res.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(res).Encode(APIResponse{Message: "Error while reading file from request."})
+		return
+	}
+	defer file.Close()
+
+	f_name := "uploads/" + uuid.NewString()
+	f, err := os.Create(f_name)
+	if err != nil {
+		res.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(res).Encode(APIResponse{Message: "Error while reading file contents."})
+		return
+	}
+	io.Copy(f, file)
+	f.Close()
+
+	new_data := read_csv(f_name)
+	new_data = format_company_data(new_data)
+	db_ref := createConnection()
+	merge_data(db_ref, new_data)
+
+	json.NewEncoder(res).Encode(APIResponse{Message: "Operation finished Sucessfully"})
+	os.Remove(f_name)
+}
+
+func searchCompany(res http.ResponseWriter, req *http.Request) {
+	log.Info("Received request in ", req.URL.Path) // TODO: convert to a middleware
+
+	var req_body QueryData
+	json.NewDecoder(req.Body).Decode(&req_body)
+
+	company := queryDB(req_body)
+	res.Header().Set("Content-Type", "application/json")
+	if company.Id != 0 {
+		json.NewEncoder(res).Encode(company)
+		return
+	}
+	res.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(res).Encode(APIResponse{Message: "Company not found."})
+
+}
+
+func queryDB(q QueryData) Company {
+	var company Company
+	db := createConnection()
+	result := db.Where("company_name LIKE ? AND zip_code = ?", "%"+q.Name+"%", q.Zip_Code).First(&company)
+	if result.Error != nil {
+		log.Error("Could not find company...")
+	}
+	return company
+}
+
+// File operations
 func read_csv(file_path string) [][]string {
 	// 1. Open the file
 	f, err := os.Open(file_path)
@@ -55,7 +137,14 @@ func format_company_data(company_data [][]string) [][]string {
 	}
 
 	return company_data
+}
 
+func createConnection() *gorm.DB {
+	db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
+	if err != nil {
+		log.Panic("Failed to connect to the database!\n", err)
+	}
+	return db
 }
 
 func setup_database(remove_current bool) *gorm.DB {
@@ -64,10 +153,7 @@ func setup_database(remove_current bool) *gorm.DB {
 		os.Remove("test.db")
 	}
 	// Database connection/setup
-	db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
-	if err != nil {
-		log.Panic("Failed to connect database!\n", err)
-	}
+	db := createConnection()
 	log.Info("Database connection sucessfull...")
 
 	// Migrate the schema
@@ -111,9 +197,5 @@ func main() {
 	// Initial data population
 	populate_database(company_data, db)
 
-	// acquire additional data
-	additional_data := read_csv("input_data/q2_clientData.csv")
-	additional_data = format_company_data(additional_data)
-	// Merge the newly acquired data
-	merge_data(db, additional_data)
+	createServer(8000)
 }
