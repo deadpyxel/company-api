@@ -29,6 +29,12 @@ type QueryData struct {
 	Zip_Code string `json:"zip_code"`
 }
 
+type APIResponseError struct {
+	Message string `json:"message"`
+}
+
+const MAX_FILE_SIZE = 1024 * 1024 // 1MB
+
 func init() {
 	valid.SetFieldsRequiredByDefault(true)
 }
@@ -55,8 +61,25 @@ func searchCompany(res http.ResponseWriter, req *http.Request) {
 	json.NewDecoder(req.Body).Decode(&req_body)
 	log.Info(req_body)
 
+	company := queryDB(req_body)
 	res.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(res).Encode(req_body)
+	if company.Id != 0 {
+		json.NewEncoder(res).Encode(company)
+		return
+	}
+	res.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(res).Encode(APIResponseError{Message: "Company not found."})
+
+}
+
+func queryDB(q QueryData) Company {
+	var company Company
+	db := createConnection()
+	result := db.Where("company_name LIKE ? AND zip_code = ?", "%"+q.Name+"%", q.Zip_Code).First(&company)
+	if result.Error != nil {
+		log.Error("Could not find company...")
+	}
+	return company
 }
 
 // File operations
@@ -91,7 +114,14 @@ func format_company_data(company_data [][]string) [][]string {
 	}
 
 	return company_data
+}
 
+func createConnection() *gorm.DB {
+	db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
+	if err != nil {
+		log.Panic("Failed to connect to the database!\n", err)
+	}
+	return db
 }
 
 func setup_database(remove_current bool) *gorm.DB {
@@ -100,10 +130,7 @@ func setup_database(remove_current bool) *gorm.DB {
 		os.Remove("test.db")
 	}
 	// Database connection/setup
-	db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
-	if err != nil {
-		log.Panic("Failed to connect database!\n", err)
-	}
+	db := createConnection()
 	log.Info("Database connection sucessfull...")
 
 	// Migrate the schema
