@@ -2,11 +2,15 @@ package main
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
 	valid "github.com/asaskevich/govalidator"
+	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -14,16 +18,48 @@ import (
 
 type Company struct {
 	gorm.Model
-	Id           uint   `gorm:"autoIncrement,primaryKey"`
-	Company_name string `valid:"string"`
-	Zip_Code     string `gorm:"size:5" valid:"length(5),numeric"`
-	Website      string `valid:"url,optional"`
+	Id           uint   `gorm:"autoIncrement,primaryKey" json:"id"`
+	Company_name string `valid:"string" json:"name"`
+	Zip_Code     string `gorm:"size:5" valid:"length(5),numeric" json:"zip"`
+	Website      string `valid:"url,optional" json:"website"`
+}
+
+type QueryData struct {
+	Name     string `json:"name"`
+	Zip_Code string `json:"zip_code"`
 }
 
 func init() {
 	valid.SetFieldsRequiredByDefault(true)
 }
 
+// Network functions
+func createServer(port int) {
+	router := mux.NewRouter().StrictSlash(true)
+	router.HandleFunc("/import", importData).Methods("POST")
+	router.HandleFunc("/companies/search", searchCompany).Methods("GET")
+	log.Info("Attempting to serve API on ", port)
+	log.Fatal(http.ListenAndServe(":"+fmt.Sprint(port), router))
+}
+
+func importData(res http.ResponseWriter, req *http.Request) {
+	log.Info("Received request in ", req.URL.Path) // TODO: convert to a middleware
+	res.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(res).Encode("{message: haha}")
+}
+
+func searchCompany(res http.ResponseWriter, req *http.Request) {
+	log.Info("Received request in ", req.URL.Path) // TODO: convert to a middleware
+
+	var req_body QueryData
+	json.NewDecoder(req.Body).Decode(&req_body)
+	log.Info(req_body)
+
+	res.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(res).Encode(req_body)
+}
+
+// File operations
 func read_csv(file_path string) [][]string {
 	// 1. Open the file
 	f, err := os.Open(file_path)
@@ -116,4 +152,6 @@ func main() {
 	additional_data = format_company_data(additional_data)
 	// Merge the newly acquired data
 	merge_data(db, additional_data)
+
+	createServer(8000)
 }
