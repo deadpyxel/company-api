@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	valid "github.com/asaskevich/govalidator"
 	"github.com/google/uuid"
@@ -17,6 +18,8 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+const DB_CONNECTION = "prod.db" // connection string to the database
 
 type Company struct {
 	Id           uint   `gorm:"autoIncrement,primaryKey" json:"id"`
@@ -43,15 +46,24 @@ func createServer(port int) {
 	router := mux.NewRouter().StrictSlash(true)
 	router.HandleFunc("/import", importData).Methods("POST")
 	router.HandleFunc("/companies/search", searchCompany).Methods("GET")
+	router.Use(requestLoggingMiddleware)
 	log.Info("Attempting to serve API on ", port)
 	log.Fatal(http.ListenAndServe(":"+fmt.Sprint(port), router))
 }
 
+func requestLoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Info(time.Now(), " - Received ", r.Method, " request on ", r.RequestURI)
+		// Call the next handler
+		next.ServeHTTP(w, r)
+	})
+}
+
 func importData(res http.ResponseWriter, req *http.Request) {
-	log.Info("Received request in ", req.URL.Path) // TODO: convert to a middleware
 	res.Header().Set("Content-Type", "application/json")
 
 	file, _, err := req.FormFile("file")
+	// either the file is unavailable for in the request body or the field name was wrong
 	if err != nil {
 		res.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(res).Encode(APIResponse{Message: "Error while reading file from request."})
@@ -63,15 +75,15 @@ func importData(res http.ResponseWriter, req *http.Request) {
 	f, err := os.Create(f_name)
 	if err != nil {
 		res.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(res).Encode(APIResponse{Message: "Error while reading file contents."})
+		json.NewEncoder(res).Encode(APIResponse{Message: "Error while attempting to read file contents."})
 		return
 	}
 	io.Copy(f, file)
 	f.Close()
 
-	new_data := read_csv(f_name)
-	new_data = format_company_data(new_data)
-	db_ref := createConnection()
+	new_data := readCsv(f_name)
+	new_data = formatCompanyData(new_data)
+	db_ref := createConnection(DB_CONNECTION)
 	merge_data(db_ref, new_data)
 
 	json.NewEncoder(res).Encode(APIResponse{Message: "Operation finished Sucessfully"})
@@ -79,12 +91,16 @@ func importData(res http.ResponseWriter, req *http.Request) {
 }
 
 func searchCompany(res http.ResponseWriter, req *http.Request) {
-	log.Info("Received request in ", req.URL.Path) // TODO: convert to a middleware
 
-	var req_body QueryData
-	json.NewDecoder(req.Body).Decode(&req_body)
+	var reqBody QueryData
+	if req.Body == nil {
+		res.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(res).Encode(APIResponse{Message: "Body not found in the request"})
+		return
+	}
+	json.NewDecoder(req.Body).Decode(&reqBody)
 
-	company := queryDB(req_body)
+	company := queryDB(reqBody)
 	res.Header().Set("Content-Type", "application/json")
 	if company.Id != 0 {
 		json.NewEncoder(res).Encode(company)
@@ -97,7 +113,7 @@ func searchCompany(res http.ResponseWriter, req *http.Request) {
 
 func queryDB(q QueryData) Company {
 	var company Company
-	db := createConnection()
+	db := createConnection(DB_CONNECTION)
 	result := db.Where("company_name LIKE ? AND zip_code = ?", "%"+q.Name+"%", q.Zip_Code).First(&company)
 	if result.Error != nil {
 		log.Error("Could not find company...")
@@ -106,9 +122,9 @@ func queryDB(q QueryData) Company {
 }
 
 // File operations
-func read_csv(file_path string) [][]string {
+func readCsv(filePath string) [][]string {
 	// 1. Open the file
-	f, err := os.Open(file_path)
+	f, err := os.Open(filePath)
 	if err != nil {
 		log.Panic("Unable to load CSV file, be sure to check the file path.\n", err)
 	}
@@ -127,7 +143,8 @@ func read_csv(file_path string) [][]string {
 	return csv_companies[1:]
 }
 
-func format_company_data(company_data [][]string) [][]string {
+func formatCompanyData(company_data [][]string) [][]string {
+	// TODO: return error if the data has more than 3 components
 	for _, company := range company_data {
 		// Titlecase all names
 		company[0] = strings.Title(company[0])
@@ -139,21 +156,21 @@ func format_company_data(company_data [][]string) [][]string {
 	return company_data
 }
 
-func createConnection() *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
+func createConnection(connectionString string) *gorm.DB {
+	db, err := gorm.Open(sqlite.Open(connectionString), &gorm.Config{})
 	if err != nil {
 		log.Panic("Failed to connect to the database!\n", err)
 	}
 	return db
 }
 
-func setup_database(remove_current bool) *gorm.DB {
+func setupDatabase(remove_current bool) *gorm.DB {
 	if remove_current {
 		log.Info("Removing existing data...")
-		os.Remove("test.db")
+		os.Remove(DB_CONNECTION)
 	}
 	// Database connection/setup
-	db := createConnection()
+	db := createConnection(DB_CONNECTION)
 	log.Info("Database connection sucessfull...")
 
 	// Migrate the schema
@@ -162,23 +179,23 @@ func setup_database(remove_current bool) *gorm.DB {
 	return db
 }
 
-func populate_database(company_data [][]string, db *gorm.DB) {
-	log.Info("Populating database with ", len(company_data), " entries...")
-	for _, company := range company_data {
+func populateDatabase(companyData [][]string, db *gorm.DB) {
+	log.Info("Populating database with ", len(companyData), " entries...")
+	for _, company := range companyData {
 		db.Create(&Company{Company_name: company[0], Zip_Code: company[1]})
 	}
 }
 
-func merge_data(current_db *gorm.DB, additional_data [][]string) {
-	log.Info("Attempting to merge ", len(additional_data), " entries into the database...")
-	for _, company_data := range additional_data {
+func merge_data(currentDB *gorm.DB, additionalData [][]string) {
+	log.Info("Attempting to merge ", len(additionalData), " entries into the database...")
+	for _, company_data := range additionalData {
 		var comp Company
-		result := current_db.Where("company_name LIKE ? AND zip_code = ?", "%"+company_data[0]+"%", company_data[1]).First(&comp)
+		result := currentDB.Where("company_name LIKE ? AND zip_code = ?", "%"+company_data[0]+"%", company_data[1]).First(&comp)
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			log.Error("Company not found...skipping...")
 			continue
 		}
-		current_db.Model(&comp).Update("website", company_data[2])
+		currentDB.Model(&comp).Update("website", company_data[2])
 	}
 }
 
@@ -189,13 +206,13 @@ System requirements:
   3. Serve information as a REST API
 */
 func main() {
-	db := setup_database(true)
+	db := setupDatabase(true)
 
 	// Initial data acquisition
-	company_data := read_csv("input_data/q1_catalog.csv")
-	company_data = format_company_data(company_data)
+	company_data := readCsv("input_data/q1_catalog.csv")
+	company_data = formatCompanyData(company_data)
 	// Initial data population
-	populate_database(company_data, db)
+	populateDatabase(company_data, db)
 
 	createServer(8000)
 }

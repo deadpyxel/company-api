@@ -8,7 +8,10 @@ import (
 	"testing"
 )
 
-const DB_NAME_TEST = "test.db"
+func init() {
+	db := createConnection(DB_CONNECTION)
+	db.AutoMigrate(&Company{})
+}
 
 func TestFormattingListWithTwoComponents(t *testing.T) {
 	initial_list := [][]string{
@@ -71,7 +74,8 @@ func TestSearchingReturns404IfNoResults(t *testing.T) {
 
 func TestSearchingReturnsDesiredCompanyIfFoundWithStatus200(t *testing.T) {
 	comp := Company{Company_name: "Test Company", Zip_Code: "99999", Id: 999}
-	db := createConnection()
+	db := createConnection(DB_CONNECTION)
+	db.AutoMigrate(&Company{})
 	db.Create(&comp)
 	jsonBody := []byte(`{"name":"Test", "zip_code": "99999"}`)
 	req, err := http.NewRequest("GET", "/companies/search", bytes.NewBuffer(jsonBody))
@@ -87,7 +91,8 @@ func TestSearchingReturnsDesiredCompanyIfFoundWithStatus200(t *testing.T) {
 
 	expected := `{"id":999,"name":"Test Company","zip":"99999","website":""}`
 	if rr.Body.String() != expected {
-		t.Errorf("handler returned unexpected body: got %v want %v",
+		t.Errorf("HTTP handler returned unexpected body: got %v want %v",
 			rr.Body.String(), expected)
 	}
+	db.Delete(&comp)
 }
