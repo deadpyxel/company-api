@@ -19,8 +19,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const DB_CONNECTION = "prod.db" // connection string to the database
-
 type Company struct {
 	Id           uint   `gorm:"autoIncrement,primaryKey" json:"id"`
 	Company_name string `valid:"string" json:"name"`
@@ -36,6 +34,12 @@ type QueryData struct {
 type APIResponse struct {
 	Message string `json:"message"`
 }
+
+type DB struct {
+	CONNECTION_STRING string
+}
+
+var db = DB{CONNECTION_STRING: "prod.db"}
 
 func init() {
 	valid.SetFieldsRequiredByDefault(true)
@@ -83,7 +87,7 @@ func importData(res http.ResponseWriter, req *http.Request) {
 
 	new_data := readCsv(f_name)
 	new_data = formatCompanyData(new_data)
-	db_ref := createConnection(DB_CONNECTION)
+	db_ref := db.createConnection()
 	merge_data(db_ref, new_data)
 
 	json.NewEncoder(res).Encode(APIResponse{Message: "Operation finished Sucessfully"})
@@ -113,8 +117,8 @@ func searchCompany(res http.ResponseWriter, req *http.Request) {
 
 func queryDB(q QueryData) Company {
 	var company Company
-	db := createConnection(DB_CONNECTION)
-	result := db.Where("company_name LIKE ? AND zip_code = ?", "%"+q.Name+"%", q.Zip_Code).First(&company)
+	dbConn := db.createConnection()
+	result := dbConn.Where("company_name LIKE ? AND zip_code = ?", "%"+q.Name+"%", q.Zip_Code).First(&company)
 	if result.Error != nil {
 		log.Error("Could not find company...")
 	}
@@ -130,17 +134,17 @@ func readCsv(filePath string) [][]string {
 	}
 	log.Info("Read the CSV file sucessfully")
 	// 2. Parse CSV contents (base data)
-	csv_reader := csv.NewReader(f)
-	csv_reader.Comma = ';' // Custom separator
+	csvReader := csv.NewReader(f)
+	csvReader.Comma = ';' // Custom separator
 
-	csv_companies, err := csv_reader.ReadAll()
+	csvCompanies, err := csvReader.ReadAll()
 	if err != nil {
 		log.Panic("Unable to parse CSV contents, check the file syntax.\n", err)
 	}
 
 	// return the file data as a list of lists of strings,
 	// removing the first entry as it is a header
-	return csv_companies[1:]
+	return csvCompanies[1:]
 }
 
 func formatCompanyData(company_data [][]string) [][]string {
@@ -156,27 +160,27 @@ func formatCompanyData(company_data [][]string) [][]string {
 	return company_data
 }
 
-func createConnection(connectionString string) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(connectionString), &gorm.Config{})
+func (db *DB) createConnection() *gorm.DB {
+	dbConn, err := gorm.Open(sqlite.Open(db.CONNECTION_STRING), &gorm.Config{})
 	if err != nil {
 		log.Panic("Failed to connect to the database!\n", err)
 	}
-	return db
+	return dbConn
 }
 
 func setupDatabase(remove_current bool) *gorm.DB {
 	if remove_current {
 		log.Info("Removing existing data...")
-		os.Remove(DB_CONNECTION)
+		os.Remove(db.CONNECTION_STRING)
 	}
 	// Database connection/setup
-	db := createConnection(DB_CONNECTION)
+	dbConn := db.createConnection()
 	log.Info("Database connection sucessfull...")
 
 	// Migrate the schema
-	db.AutoMigrate(&Company{})
+	dbConn.AutoMigrate(&Company{})
 
-	return db
+	return dbConn
 }
 
 func populateDatabase(companyData [][]string, db *gorm.DB) {

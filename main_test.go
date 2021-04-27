@@ -8,9 +8,11 @@ import (
 	"testing"
 )
 
+var test_db = DB{CONNECTION_STRING: "test.db"}
+
 func init() {
-	db := createConnection(DB_CONNECTION)
-	db.AutoMigrate(&Company{})
+	testDbConn := test_db.createConnection()
+	testDbConn.AutoMigrate(&Company{})
 }
 
 func TestFormattingListWithTwoComponents(t *testing.T) {
@@ -74,7 +76,7 @@ func TestSearchingReturns404IfNoResults(t *testing.T) {
 
 func TestSearchingReturnsDesiredCompanyIfFoundWithStatus200(t *testing.T) {
 	comp := Company{Company_name: "Test Company", Zip_Code: "99999", Id: 999}
-	db := createConnection(DB_CONNECTION)
+	db := test_db.createConnection()
 	db.AutoMigrate(&Company{})
 	db.Create(&comp)
 	jsonBody := []byte(`{"name":"Test", "zip_code": "99999"}`)
