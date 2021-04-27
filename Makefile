@@ -14,3 +14,4 @@ test:
 
 clean:
 	go clean
+	rm *.db 
