@@ -213,10 +213,10 @@ func main() {
 	db := setupDatabase(true)
 
 	// Initial data acquisition
-	company_data := readCsv("input_data/q1_catalog.csv")
-	company_data = formatCompanyData(company_data)
+	companyData := readCsv("input_data/initial_data.csv")
+	companyData = formatCompanyData(companyData)
 	// Initial data population
-	populateDatabase(company_data, db)
+	populateDatabase(companyData, db)
 
 	createServer(8000)
 }
