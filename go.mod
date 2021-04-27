@@ -1,4 +1,4 @@
-module csv-api
+module company-api
 
 go 1.16
 
