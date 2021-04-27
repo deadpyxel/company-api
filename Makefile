@@ -1,4 +1,6 @@
 BINARY_NAME=company-api
+VERSION=0.6.0
+IMAGE_NAME := "deadpyxel/company-api"
  
 all: build test
 
@@ -19,3 +21,6 @@ clean:
 	go clean
 	rm uploads -r
 	rm *.db 
+
+package:
+	docker build --build-arg VERSION=${VERSION} --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(IMAGE_NAME):local .
